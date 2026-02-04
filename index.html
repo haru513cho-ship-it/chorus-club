@@ -88,7 +88,7 @@
                 // スケジュール取得
                 const schedRef = db.collection("data").doc(appId).collection("months").doc(currentMonth).collection("config").doc("schedule");
                 const unsubSched = schedRef.onSnapshot((d) => {
-                    setSchedule(d.exists() ? d.data().days : []);
+                    setSchedule(d.exists ? d.data().days : []);
                     setLoading(false);
                 }, (err) => {
                     console.error("Firestore Sched Error:", err);
@@ -279,3 +279,4 @@
     </script>
 </body>
 </html>
+
