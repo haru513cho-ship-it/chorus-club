@@ -4,26 +4,27 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>合唱部 出欠管理</title>
-    <!-- ライブラリ：最も安定した読み込み方式を採用 -->
+    <!-- ライブラリ：最も安定しているバージョンを直接読み込む -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- Firebase SDK (互換モード：ブラウザで最も確実に動く形式) -->
+    
+    <!-- Firebase SDK：エラーの出にくい互換（compat）モードを使用 -->
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+    
     <style>
         .sticky-left-1 { position: sticky; left: 0; z-index: 10; background: white; }
         .sticky-left-2 { position: sticky; left: 80px; z-index: 10; background: white; }
         input, button { font-size: 16px !important; }
-        .overflow-auto::-webkit-scrollbar { height: 8px; width: 8px; }
-        .overflow-auto::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
     </style>
 </head>
 <body class="bg-white text-slate-900">
     <div id="root"></div>
 
+    <!-- Babelの設定をシンプルに変更 -->
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
 
@@ -37,14 +38,13 @@
     appId: "1:1074147765746:web:674ad63a85195567df0f6b",
     measurementId: "G-J19Y9FMYTT"
   };
-
-        // Firebase初期化
+        // Firebase初期化 (確実に1回だけ行う)
         if (!firebase.apps.length) {
             firebase.initializeApp(firebaseConfig);
         }
         const db = firebase.firestore();
         const auth = firebase.auth();
-        const appId = "chorus-app-stable";
+        const appId = "chorus-app-main-v1";
 
         const STATUS_MAP = {
             '◎': { label: '出席', color: 'bg-indigo-600', text: 'text-indigo-600' },
@@ -68,31 +68,42 @@
             const [myAnswers, setMyAnswers] = useState({});
             const [isEditing, setIsEditing] = useState(false);
             const [showAdmin, setShowAdmin] = useState(false);
-            const [deleteTarget, setDeleteTarget] = useState(null);
 
+            // 1. 匿名認証
             useEffect(() => {
                 const unsubAuth = auth.onAuthStateChanged(async (u) => {
-                    if (!u) { await auth.signInAnonymously(); }
+                    if (!u) {
+                        try { await auth.signInAnonymously(); } catch(e) { console.error("Auth Error:", e); }
+                    }
                     setUser(u);
                 });
                 return () => unsubAuth();
             }, []);
 
+            // 2. データ購読
             useEffect(() => {
                 if (!user) return;
                 setLoading(true);
                 
+                // スケジュール取得
                 const schedRef = db.collection("data").doc(appId).collection("months").doc(currentMonth).collection("config").doc("schedule");
                 const unsubSched = schedRef.onSnapshot((d) => {
                     setSchedule(d.exists() ? d.data().days : []);
                     setLoading(false);
-                }, () => setLoading(false));
+                }, (err) => {
+                    console.error("Firestore Sched Error:", err);
+                    setLoading(false);
+                });
 
+                // 出欠一覧取得
                 const attenRef = db.collection("data").doc(appId).collection("months").doc(currentMonth).collection("attendances");
                 const unsubAtten = attenRef.onSnapshot((snap) => {
                     const data = snap.docs.map(d => d.data());
                     setAttendances(data.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0)));
+                }, (err) => {
+                    console.error("Firestore Atten Error:", err);
                 });
+
                 return () => { unsubSched(); unsubAtten(); };
             }, [user, currentMonth]);
 
@@ -135,44 +146,53 @@
 
             const maxAtt = Math.max(...stats.map(s => s['◎']), 0);
 
-            if (loading) return <div className="p-10 text-center font-bold">通信中...</div>;
+            if (loading) return (
+                <div className="p-20 text-center space-y-4">
+                    <div className="animate-spin h-10 w-10 border-4 border-sky-500 border-t-transparent rounded-full mx-auto"></div>
+                    <p className="font-bold text-slate-400">通信中...</p>
+                    <p className="text-[10px] text-slate-300">※1分以上続く場合は設定ミスか通信環境を確認してください</p>
+                </div>
+            );
 
             return (
                 <div className="max-w-4xl mx-auto pb-10 px-1">
                     <header className="bg-slate-800 text-white p-2 flex justify-between items-center sticky top-0 z-40 shadow">
                         <div className="flex items-center font-bold">
-                            <button onClick={() => changeMonth(-1)} className="px-3 py-1 font-bold text-xl">←</button>
+                            <button onClick={() => changeMonth(-1)} className="px-3 py-1 text-xl">←</button>
                             <span className="text-sm px-2">{currentMonth.replace('-', '/')}</span>
-                            <button onClick={() => changeMonth(1)} className="px-3 py-1 font-bold text-xl">→</button>
+                            <button onClick={() => changeMonth(1)} className="px-3 py-1 text-xl">→</button>
                         </div>
-                        <button onClick={() => setShowAdmin(!showAdmin)} className="text-xs opacity-50 px-2 underline tracking-tighter">管理者設定</button>
+                        <button onClick={() => setShowAdmin(!showAdmin)} className="text-xs opacity-50 px-2 underline">設定</button>
                     </header>
 
                     {showAdmin && (
-                        <div className="p-3 bg-amber-50 border-b border-amber-200 text-xs">
-                            <button onClick={generateSchedule} className="bg-amber-600 text-white px-4 py-3 rounded-xl font-bold mb-4 w-full shadow-md active:scale-95">この月の練習日を自動作成</button>
-                            <p className="font-bold border-b border-amber-200 pb-1 mb-2 text-amber-800">登録部員の管理（名前タップで削除）</p>
-                            <div className="flex flex-wrap gap-1">
-                                {attendances.map(a => (
-                                    <button key={a.name} onClick={() => setDeleteTarget(a.name)} className="bg-white border border-amber-200 rounded-lg px-2 py-1 flex items-center gap-1 active:bg-red-50 text-[10px]">
-                                        {a.name} <span className="text-red-400 font-bold">×</span>
-                                    </button>
-                                ))}
+                        <div className="p-3 bg-amber-50 border-b border-amber-200 text-xs animate-in slide-in-from-top duration-200">
+                            <p className="font-bold mb-2 text-amber-800">管理者メニュー</p>
+                            <button onClick={generateSchedule} className="bg-amber-600 text-white px-4 py-3 rounded-xl font-bold w-full shadow active:scale-95 mb-4">この月の練習日を自動作成</button>
+                            <div className="space-y-1">
+                                <p className="font-bold border-b border-amber-200 pb-1 mb-2 text-amber-800">登録部員（タップで削除）</p>
+                                <div className="flex flex-wrap gap-1">
+                                    {attendances.map(a => (
+                                        <button key={a.name} onClick={async () => { if(confirm(`${a.name}さんを消しますか？`)) await db.collection("data").doc(appId).collection("months").doc(currentMonth).collection("attendances").doc(a.name).delete(); }} className="bg-white border rounded px-2 py-1 flex items-center gap-1 active:bg-red-50">
+                                            {a.name} <span className="text-red-400">×</span>
+                                        </button>
+                                    ))}
+                                </div>
                             </div>
                         </div>
                     )}
 
                     <div className="overflow-auto max-h-[60vh] border-2 border-slate-300 my-2 rounded-lg bg-slate-50 shadow-inner">
                         <table className="min-w-full text-[11px] border-collapse bg-white">
-                            <thead className="sticky top-0 z-20 bg-slate-100 shadow-sm border-b-2 border-slate-300 font-bold">
+                            <thead className="sticky top-0 z-20 bg-slate-100 shadow-sm border-b-2 border-slate-300">
                                 <tr>
-                                    <th className="sticky left-0 p-2 border-r bg-slate-100 z-30">日程</th>
-                                    <th className="sticky left-[80px] p-1 border-r text-indigo-600 text-center z-30 bg-slate-100">◎</th>
-                                    <th className="p-1 border-r text-emerald-500 text-center">○</th>
-                                    <th className="p-1 border-r text-amber-500 text-center">△</th>
-                                    <th className="p-1 border-r text-rose-500 text-center font-bold">×</th>
+                                    <th className="sticky-left-1 p-2 border-r bg-slate-100 z-30">日程</th>
+                                    <th className="sticky-left-2 p-1 border-r text-indigo-600 font-bold text-center z-30 bg-slate-100 text-[14px]">◎</th>
+                                    <th className="p-1 border-r text-emerald-500 font-bold text-center text-[14px]">○</th>
+                                    <th className="p-1 border-r text-amber-500 font-bold text-center text-[14px]">△</th>
+                                    <th className="p-1 border-r text-rose-500 font-bold text-center text-[14px]">×</th>
                                     {attendances.map(a => (
-                                        <th key={a.name} className="p-2 border-r min-w-[75px] text-sky-700 underline text-center cursor-pointer" onClick={()=>{setUserName(a.name); setMyAnswers(a.answers || {}); setIsEditing(true);}}>
+                                        <th key={a.name} className="p-2 border-r min-w-[75px] text-sky-700 underline font-bold" onClick={()=>{setUserName(a.name); setMyAnswers(a.answers || {}); setIsEditing(true);}}>
                                             {a.name}
                                         </th>
                                     ))}
@@ -184,8 +204,8 @@
                                     const isMax = maxAtt > 0 && s['◎'] === maxAtt;
                                     return (
                                         <tr key={s.id} className="border-b border-slate-100">
-                                            <td className="sticky left-0 p-2 border-r font-bold border-l-4 border-l-amber-400 whitespace-nowrap bg-white z-10">{day?.label}</td>
-                                            <td className={`sticky left-[80px] text-center border-r font-bold z-10 ${isMax ? 'bg-amber-50 text-red-600' : 'bg-white'}`}>{s['◎'] || ''}</td>
+                                            <td className="sticky-left-1 p-2 border-r font-bold border-l-4 border-l-amber-400 whitespace-nowrap bg-white z-10">{day?.label}</td>
+                                            <td className={`sticky-left-2 text-center border-r font-bold z-10 ${isMax ? 'bg-amber-50 text-red-600' : 'bg-white'}`}>{s['◎'] || ''}</td>
                                             <td className="text-center border-r bg-slate-50">{s['○'] || ''}</td>
                                             <td className="text-center border-r bg-slate-50">{s['△'] || ''}</td>
                                             <td className="text-center border-r bg-slate-50">{s['×'] || ''}</td>
@@ -203,69 +223,53 @@
 
                     {!isEditing ? (
                         <div className="flex gap-2 p-2 bg-slate-100 rounded-xl border border-slate-200 items-center mx-1 shadow-sm">
-                            <span className="text-[10px] font-bold text-slate-400 uppercase ml-1">Name:</span>
-                            <input type="text" className="flex-1 p-2 border rounded-lg text-base outline-none bg-white shadow-inner" placeholder="名前を入力" value={userName} onChange={e=>setUserName(e.target.value)} />
-                            <button onClick={()=>setIsEditing(true)} className="bg-sky-500 text-white px-6 py-2 rounded-full font-bold text-xs active:scale-95 shadow-md">入力画面へ</button>
+                            <span className="text-xs font-bold text-slate-500">名前:</span>
+                            <input type="text" className="flex-1 p-2 border rounded-lg text-base outline-none bg-white shadow-inner" placeholder="タップして名前入力" value={userName} onChange={e=>setUserName(e.target.value)} />
+                            <button onClick={()=>setIsEditing(true)} className="bg-sky-500 text-white px-5 py-2 rounded-full font-bold text-xs active:scale-95">入力へ</button>
                         </div>
                     ) : (
                         <div className="fixed inset-0 bg-white z-50 p-4 overflow-y-auto">
-                            <div className="flex justify-between items-center mb-4 border-b pb-2 sticky top-0 bg-white z-10">
+                            <div className="flex justify-between items-center mb-4 border-b pb-2 sticky top-0 bg-white z-10 shadow-sm">
                                 <h2 className="font-bold text-sky-600 px-2">{userName} さんの回答</h2>
                                 <button onClick={()=>{setIsEditing(false); setUserName(''); setMyAnswers({});}} className="underline text-slate-400 font-bold p-2 text-xs">キャンセル</button>
                             </div>
                             <div className="space-y-4">
                                 {schedule.map(d => (
                                     <div key={d.id} className="p-3 border rounded-2xl bg-slate-50 shadow-sm border-slate-200">
-                                        <div className="font-bold mb-2 flex justify-between items-center px-1">
+                                        <p className="font-bold mb-2 flex justify-between items-center px-1">
                                             <span>{d.label}</span>
                                             <span className="text-[10px] opacity-40 font-normal">{d.time}</span>
-                                        </div>
+                                        </p>
                                         <div className="grid grid-cols-4 gap-2 mb-3">
                                             {Object.keys(STATUS_MAP).map(sym => (
                                                 <button key={sym} onClick={()=>{
                                                     const cur = myAnswers[d.id]?.status;
                                                     setMyAnswers({...myAnswers, [d.id]: {...myAnswers[d.id], status: cur === sym ? null : sym}});
                                                 }} className={`py-4 rounded-xl font-black border-2 transition-all ${myAnswers[d.id]?.status === sym ? `${STATUS_MAP[sym].color} text-white border-transparent shadow-lg scale-105` : 'bg-white text-slate-300 border-slate-100'}`}>
-                                                    <span className="text-2xl">{sym}</span>
+                                                    <span className="text-2xl leading-none">{sym}</span>
                                                 </button>
                                             ))}
                                         </div>
-                                        <input type="text" placeholder="備考・コメント" className="w-full text-base bg-white border rounded-lg p-3 outline-none focus:border-sky-500 shadow-inner" value={myAnswers[d.id]?.comment || ''} onChange={e=>setMyAnswers({...myAnswers, [d.id]: {...myAnswers[d.id], comment: e.target.value}})} />
+                                        <input type="text" placeholder="理由など（備考）" className="w-full text-base bg-white border rounded p-2 outline-none focus:border-sky-500 shadow-inner" value={myAnswers[d.id]?.comment || ''} onChange={e=>setMyAnswers({...myAnswers, [d.id]: {...myAnswers[d.id], comment: e.target.value}})} />
                                     </div>
                                 ))}
                             </div>
-                            <button onClick={handleSave} className="w-full bg-sky-600 text-white font-black py-5 rounded-2xl shadow-xl mt-8 text-xl active:scale-95 transition-transform">保存して一覧に戻る</button>
+                            <button onClick={handleSave} className="w-full bg-sky-600 text-white font-black py-5 rounded-2xl shadow-xl mt-6 text-xl active:scale-95">保存して戻る</button>
                         </div>
                     )}
 
-                    <section className="mt-6 p-4 bg-slate-50 rounded-xl border border-slate-200 mx-1 shadow-inner">
-                        <p className="font-bold border-b border-slate-200 pb-1 mb-2 text-slate-400 text-[10px] uppercase tracking-tighter">Comments</p>
-                        <div className="space-y-3">
+                    <section className="mt-4 p-3 bg-slate-50 rounded-xl border border-slate-200 mx-1">
+                        <p className="font-bold border-b border-slate-200 pb-1 mb-2 text-slate-400 text-[10px] uppercase">Comments</p>
+                        <div className="space-y-2">
                             {attendances.filter(a => Object.values(a.answers || {}).some(v => v.comment)).map((a, i) => (
-                                <div key={i} className="text-[11px] leading-relaxed border-b border-white pb-1 last:border-0">
-                                    <span className="font-bold text-sky-700 underline cursor-pointer" onClick={()=>{setUserName(a.name); setMyAnswers(a.answers); setIsEditing(true);}}>{a.name}</span>
+                                <div key={i} className="text-[11px] leading-relaxed border-b border-white pb-1">
+                                    <span className="font-bold text-sky-700 underline" onClick={()=>{setUserName(a.name); setMyAnswers(a.answers); setIsEditing(true);}}>{a.name}</span>
                                     <span className="ml-2 text-slate-600">{Object.entries(a.answers).filter(([_, v]) => v.comment).map(([id, v]) => `${schedule.find(s=>s.id===id)?.label || ''} ${v.comment}`).join('、')}</span>
-                                    <div className="text-[9px] text-slate-300 text-right italic">{a.updatedAt}</div>
+                                    <span className="ml-1 text-[9px] text-slate-400">[{a.updatedAt}]</span>
                                 </div>
                             ))}
                         </div>
                     </section>
-
-                    {/* 削除確認ダイアログ */}
-                    {deleteTarget && (
-                        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[100] p-6 backdrop-blur-sm">
-                            <div className="bg-white p-8 rounded-3xl shadow-2xl max-w-sm w-full text-center">
-                                <p className="font-bold mb-6 text-lg">{deleteTarget} さんを<br/>名簿から消去しますか？</p>
-                                <div className="flex gap-3">
-                                    <button onClick={() => setDeleteTarget(null)} className="flex-1 py-4 rounded-xl bg-slate-100 font-bold text-slate-600">やめる</button>
-                                    <button onClick={async () => {
-                                        await db.collection("data").doc(appId).collection("months").doc(currentMonth).collection("attendances").doc(deleteTarget).delete();
-                                        setDeleteTarget(null);
-                                    }} className="flex-1 py-4 rounded-xl bg-red-500 text-white font-bold shadow-lg">消去する</button>
-                                </div>
-                            </div>
-                        </div>
-                    )}
                 </div>
             );
         }
@@ -274,5 +278,4 @@
         root.render(<App />);
     </script>
 </body>
-
 </html>
